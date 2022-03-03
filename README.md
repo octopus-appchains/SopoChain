@@ -1,2 +1,3 @@
-# sopometa-appchain
+# Sopometa Appchain
+
 SopoMeta blockchain
