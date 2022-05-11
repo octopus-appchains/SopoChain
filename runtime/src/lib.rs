@@ -12,64 +12,62 @@ use pallet_grandpa::{
 use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
 use sp_runtime::{
-	create_runtime_str, generic, impl_opaque_keys,
-	traits::{AccountIdLookup, BlakeTwo256, Block as BlockT, IdentifyAccount, NumberFor, Verify},
-	transaction_validity::{TransactionSource, TransactionValidity},
-	ApplyExtrinsicResult, MultiSignature,
+	create_runtime_str,
+	generic::{self, Era},
+	impl_opaque_keys,
+	traits::{
+		self, AccountIdLookup, BlakeTwo256, Block as BlockT, ConvertInto, IdentifyAccount,
+		Keccak256, NumberFor, OpaqueKeys, SaturatedConversion, StaticLookup, Verify,
+	},
+	transaction_validity::{TransactionPriority, TransactionSource, TransactionValidity},
+	ApplyExtrinsicResult, MultiSignature, Perbill,
 };
 use sp_std::prelude::*;
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
-
 // A few exports that help ease life for downstream crates.
+use beefy_primitives::{crypto::AuthorityId as BeefyId, mmr::MmrLeafVersion};
+use codec::Encode;
+use frame_support::PalletId;
 pub use frame_support::{
 	construct_runtime, parameter_types,
-	traits::{KeyOwnerProofSystem, Randomness, StorageInfo},
+	traits::{
+		ConstU128, ConstU16, ConstU32, ConstU8, KeyOwnerProofSystem, Randomness, StorageInfo,
+	},
 	weights::{
 		constants::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_PER_SECOND},
-		IdentityFee, Weight,
+		DispatchClass, IdentityFee, Weight,
 	},
 	StorageValue,
 };
-pub use pallet_balances::Call as BalancesCall;
-pub use pallet_timestamp::Call as TimestampCall;
-use pallet_transaction_payment::CurrencyAdapter;
-#[cfg(any(feature = "std", test))]
-pub use sp_runtime::BuildStorage;
-pub use sp_runtime::{Perbill, Permill};
-
-use beefy_primitives::{crypto::AuthorityId as BeefyId, mmr::MmrLeafVersion};
-use codec::Encode;
-use frame_support::{weights::DispatchClass, PalletId};
 use frame_system::{
 	limits::{BlockLength, BlockWeights},
 	EnsureRoot,
 };
+pub use pallet_balances::Call as BalancesCall;
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
 use pallet_mmr_primitives as mmr;
 use pallet_session::historical as pallet_session_historical;
-use pallet_transaction_payment::{Multiplier, TargetedFeeAdjustment};
-use sp_runtime::{
-	generic::Era,
-	traits::{self, ConvertInto, Keccak256, OpaqueKeys, SaturatedConversion, StaticLookup},
-	transaction_validity::TransactionPriority,
-	FixedPointNumber, Perquintill,
-};
+pub use pallet_timestamp::Call as TimestampCall;
+use pallet_transaction_payment::CurrencyAdapter;
+#[cfg(any(feature = "std", test))]
+pub use sp_runtime::BuildStorage;
 use static_assertions::const_assert;
 
 mod precompiles;
 use codec::Decode;
 use fp_rpc::TransactionStatus;
-use frame_support::{traits::FindAuthor, ConsensusEngineId};
+pub use frame_support::{traits::FindAuthor, ConsensusEngineId};
 use pallet_ethereum::{Call::transact, Transaction as EthereumTransaction};
 use pallet_evm::FeeCalculator;
 use pallet_evm::{Account as EVMAccount, EnsureAddressTruncated, HashedAddressMapping, Runner};
 use precompiles::FrontierPrecompiles;
-use sp_core::{crypto::Public, H160, H256, U256};
+use sp_core::{H160, H256, U256};
 use sp_runtime::{
 	traits::{Dispatchable, PostDispatchInfoOf},
 	transaction_validity::TransactionValidityError,
+	Permill, RuntimeAppPublic,
 };
 use sp_std::marker::PhantomData;
 
@@ -141,6 +139,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	impl_version: 1,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 1,
+	state_version: 1,
 };
 
 pub const MILLICENTS: Balance = 10_000_000_000_000;
@@ -233,7 +232,6 @@ parameter_types! {
 		})
 		.avg_block_initialization(AVERAGE_ON_INITIALIZE_RATIO)
 		.build_or_panic();
-	pub const SS58Prefix: u16 = 42;
 }
 
 const_assert!(NORMAL_DISPATCH_RATIO.deconstruct() >= AVERAGE_ON_INITIALIZE_RATIO.deconstruct());
@@ -284,12 +282,15 @@ impl frame_system::Config for Runtime {
 	/// The data to be stored in an account.
 	type AccountData = pallet_balances::AccountData<Balance>;
 	/// Weight information for the extrinsics of this pallet.
-	type SystemWeightInfo = frame_system::weights::SubstrateWeight<Runtime>;
+	type SystemWeightInfo = ();
 	/// This is used as an identifier of the chain. 42 is the generic substrate prefix.
-	type SS58Prefix = SS58Prefix;
+	type SS58Prefix = ConstU16<42>;
 	/// The set code logic, just the default since we're not a parachain.
 	type OnSetCode = ();
+	type MaxConsumers = frame_support::traits::ConstU32<16>;
 }
+
+impl pallet_randomness_collective_flip::Config for Runtime {}
 
 parameter_types! {
 	// NOTE: Currently it is not possible to change the epoch duration after the chain has started.
@@ -355,7 +356,7 @@ impl pallet_timestamp::Config for Runtime {
 	type Moment = Moment;
 	type OnTimestampSet = Babe;
 	type MinimumPeriod = MinimumPeriod;
-	type WeightInfo = pallet_timestamp::weights::SubstrateWeight<Runtime>;
+	type WeightInfo = ();
 }
 
 parameter_types! {
@@ -376,16 +377,13 @@ impl pallet_balances::Config for Runtime {
 	type Event = Event;
 	type DustRemoval = ();
 	type ExistentialDeposit = ExistentialDeposit;
-	type AccountStore = System;
+	type AccountStore = frame_system::Pallet<Runtime>;
 	type WeightInfo = pallet_balances::weights::SubstrateWeight<Runtime>;
 }
 
 parameter_types! {
 	pub const TransactionByteFee: Balance = 10 * MILLICENTS;
 	pub const OperationalFeeMultiplier: u8 = 5;
-	pub const TargetBlockFullness: Perquintill = Perquintill::from_percent(25);
-	pub AdjustmentVariable: Multiplier = Multiplier::saturating_from_rational(1, 100_000);
-	pub MinimumMultiplier: Multiplier = Multiplier::saturating_from_rational(1, 1_000_000_000u128);
 }
 
 impl pallet_transaction_payment::Config for Runtime {
@@ -393,8 +391,7 @@ impl pallet_transaction_payment::Config for Runtime {
 	type TransactionByteFee = TransactionByteFee;
 	type OperationalFeeMultiplier = OperationalFeeMultiplier;
 	type WeightToFee = IdentityFee<Balance>;
-	type FeeMultiplierUpdate =
-		TargetedFeeAdjustment<Self, TargetBlockFullness, AdjustmentVariable, MinimumMultiplier>;
+	type FeeMultiplierUpdate = ();
 }
 
 parameter_types! {
@@ -456,6 +453,7 @@ where
 			.saturating_sub(1);
 		let era = Era::mortal(period, current_block);
 		let extra = (
+			frame_system::CheckNonZeroSender::<Runtime>::new(),
 			frame_system::CheckSpecVersion::<Runtime>::new(),
 			frame_system::CheckTxVersion::<Runtime>::new(),
 			frame_system::CheckGenesis::<Runtime>::new(),
@@ -502,13 +500,32 @@ impl pallet_im_online::Config for Runtime {
 	type MaxPeerDataEncodingSize = MaxPeerDataEncodingSize;
 }
 
-impl pallet_mmr::Config for Runtime {
-	const INDEXING_PREFIX: &'static [u8] = b"mmr";
-	type Hashing = Keccak256;
-	type Hash = <Keccak256 as traits::Hash>::Output;
-	type LeafData = pallet_beefy_mmr::Pallet<Runtime>;
-	type OnNewRoot = pallet_beefy_mmr::DepositBeefyDigest<Runtime>;
-	type WeightInfo = ();
+parameter_types! {
+	pub const AssetDeposit: Balance = 100 * DOLLARS;
+	pub const ApprovalDeposit: Balance = 1 * DOLLARS;
+	pub const StringLimit: u32 = 50;
+	pub const MetadataDepositBase: Balance = 10 * DOLLARS;
+	pub const MetadataDepositPerByte: Balance = 1 * DOLLARS;
+}
+
+pub type AssetBalance = u128;
+pub type AssetId = u32;
+
+impl pallet_assets::Config<pallet_assets::Instance1> for Runtime {
+	type Event = Event;
+	type Balance = AssetBalance;
+	type AssetId = AssetId;
+	type Currency = Balances;
+	type ForceOrigin = EnsureRoot<AccountId>;
+	type AssetDeposit = AssetDeposit;
+	type AssetAccountDeposit = ConstU128<DOLLARS>;
+	type MetadataDepositBase = MetadataDepositBase;
+	type MetadataDepositPerByte = MetadataDepositPerByte;
+	type ApprovalDeposit = ApprovalDeposit;
+	type StringLimit = StringLimit;
+	type Freezer = ();
+	type Extra = ();
+	type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
 }
 
 parameter_types! {
@@ -518,10 +535,13 @@ parameter_types! {
 	pub const ValueLimit: u32 = 256;
 }
 
-impl pallet_uniques::Config for Runtime {
+type ClassId = u128;
+type InstanceId = u128;
+
+impl pallet_uniques::Config<pallet_assets::Instance1> for Runtime {
 	type Event = Event;
-	type ClassId = u32;
-	type InstanceId = u32;
+	type ClassId = ClassId;
+	type InstanceId = InstanceId;
 	type Currency = Balances;
 	type ForceOrigin = frame_system::EnsureRoot<AccountId>;
 	type ClassDeposit = ClassDeposit;
@@ -537,6 +557,15 @@ impl pallet_uniques::Config for Runtime {
 
 impl pallet_beefy::Config for Runtime {
 	type BeefyId = BeefyId;
+}
+
+impl pallet_mmr::Config for Runtime {
+	const INDEXING_PREFIX: &'static [u8] = b"mmr";
+	type Hashing = Keccak256;
+	type Hash = <Keccak256 as traits::Hash>::Output;
+	type OnNewRoot = pallet_beefy_mmr::DepositBeefyDigest<Runtime>;
+	type WeightInfo = ();
+	type LeafData = pallet_beefy_mmr::Pallet<Runtime>;
 }
 
 parameter_types! {
@@ -573,11 +602,11 @@ impl frame_system::offchain::AppCrypto<<Signature as Verify>::Signer, Signature>
 }
 
 parameter_types! {
-	pub const OctopusAppchainPalletId: PalletId = PalletId(*b"py/octps");
-	pub const GracePeriod: u32 = 10;
-	pub const UnsignedPriority: u64 = 1 << 21;
-	pub const RequestEventLimit: u32 = 10;
-	pub const UpwardMessagesLimit: u32 = 10;
+	   pub const OctopusAppchainPalletId: PalletId = PalletId(*b"py/octps");
+	   pub const GracePeriod: u32 = 10;
+	   pub const UnsignedPriority: u64 = 1 << 21;
+	   pub const RequestEventLimit: u32 = 10;
+	   pub const UpwardMessagesLimit: u32 = 10;
 }
 
 impl pallet_octopus_appchain::Config for Runtime {
@@ -587,6 +616,10 @@ impl pallet_octopus_appchain::Config for Runtime {
 	type PalletId = OctopusAppchainPalletId;
 	type LposInterface = OctopusLpos;
 	type UpwardMessagesInterface = OctopusUpwardMessages;
+	type ClassId = ClassId;
+	type InstanceId = InstanceId;
+	type Uniques = OctopusUniques;
+	type Convertor = ();
 	type Currency = Balances;
 	type Assets = OctopusAssets;
 	type AssetBalance = AssetBalance;
@@ -627,33 +660,6 @@ impl pallet_octopus_upward_messages::Config for Runtime {
 	type WeightInfo = pallet_octopus_upward_messages::weights::SubstrateWeight<Runtime>;
 }
 
-parameter_types! {
-	pub const AssetDeposit: Balance = 100 * DOLLARS;
-	pub const ApprovalDeposit: Balance = 1 * DOLLARS;
-	pub const StringLimit: u32 = 50;
-	pub const MetadataDepositBase: Balance = 10 * DOLLARS;
-	pub const MetadataDepositPerByte: Balance = 1 * DOLLARS;
-}
-
-pub type AssetBalance = u128;
-pub type AssetId = u32;
-
-impl pallet_assets::Config<pallet_assets::Instance1> for Runtime {
-	type Event = Event;
-	type Balance = AssetBalance;
-	type AssetId = AssetId;
-	type Currency = Balances;
-	type ForceOrigin = EnsureRoot<AccountId>;
-	type AssetDeposit = AssetDeposit;
-	type MetadataDepositBase = MetadataDepositBase;
-	type MetadataDepositPerByte = MetadataDepositPerByte;
-	type ApprovalDeposit = ApprovalDeposit;
-	type StringLimit = StringLimit;
-	type Freezer = ();
-	type Extra = ();
-	type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
-}
-
 pub struct FindAuthorTruncated<F>(PhantomData<F>);
 impl<F: FindAuthor<u32>> FindAuthor<H160> for FindAuthorTruncated<F> {
 	fn find_author<'a, I>(digests: I) -> Option<H160>
@@ -690,11 +696,12 @@ impl pallet_evm::Config for Runtime {
 	type BlockGasLimit = BlockGasLimit;
 	type OnChargeTransaction = ();
 	type FindAuthor = FindAuthorTruncated<Babe>;
+	type WeightInfo = pallet_evm::weights::SubstrateWeight<Self>;
 }
 
 impl pallet_ethereum::Config for Runtime {
 	type Event = Event;
-	type StateRoot = pallet_ethereum::IntermediateStateRoot;
+	type StateRoot = pallet_ethereum::IntermediateStateRoot<Self>;
 }
 
 frame_support::parameter_types! {
@@ -748,8 +755,11 @@ construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic
 	{
 		System: frame_system,
-		Babe: pallet_babe,
+		RandomnessCollectiveFlip: pallet_randomness_collective_flip,
 		Timestamp: pallet_timestamp,
+		Babe: pallet_babe,
+		// Authorship must be before session in order to note author in the correct session and era
+		// for im-online and staking.
 		Authorship: pallet_authorship,
 		Balances: pallet_balances,
 		TransactionPayment: pallet_transaction_payment,
@@ -757,6 +767,7 @@ construct_runtime!(
 		OctopusLpos: pallet_octopus_lpos,
 		OctopusUpwardMessages: pallet_octopus_upward_messages,
 		OctopusAssets: pallet_assets::<Instance1>,
+		OctopusUniques: pallet_uniques::<Instance1>,
 		Session: pallet_session,
 		Grandpa: pallet_grandpa,
 		ImOnline: pallet_im_online,
@@ -764,7 +775,6 @@ construct_runtime!(
 		Mmr: pallet_mmr,
 		Beefy: pallet_beefy,
 		MmrLeaf: pallet_beefy_mmr,
-		Uniques: pallet_uniques,
 		Ethereum: pallet_ethereum,
 		EVM: pallet_evm,
 		DynamicFee: pallet_dynamic_fee,
@@ -807,6 +817,7 @@ pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
 pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 /// The SignedExtension to the basic transaction logic.
 pub type SignedExtra = (
+	frame_system::CheckNonZeroSender<Runtime>,
 	frame_system::CheckSpecVersion<Runtime>,
 	frame_system::CheckTxVersion<Runtime>,
 	frame_system::CheckGenesis<Runtime>,
@@ -828,7 +839,7 @@ pub type Executive = frame_executive::Executive<
 	Block,
 	frame_system::ChainContext<Runtime>,
 	Runtime,
-	AllPallets,
+	AllPalletsWithSystem,
 >;
 
 impl fp_self_contained::SelfContainedCall for Call {
@@ -876,6 +887,21 @@ impl fp_self_contained::SelfContainedCall for Call {
 			_ => None,
 		}
 	}
+}
+
+#[cfg(feature = "runtime-benchmarks")]
+#[macro_use]
+extern crate frame_benchmarking;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod benches {
+	define_benchmarks!(
+		[frame_benchmarking, BaselineBench::<Runtime>]
+		[frame_system, SystemBench::<Runtime>]
+		[pallet_balances, Balances]
+		[pallet_timestamp, Timestamp]
+		[pallet_template, TemplateModule]
+	);
 }
 
 impl_runtime_apis! {
@@ -1043,6 +1069,60 @@ impl_runtime_apis! {
 		}
 	}
 
+	impl pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi<Block, Balance> for Runtime {
+		fn query_info(
+			uxt: <Block as BlockT>::Extrinsic,
+			len: u32,
+		) -> pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo<Balance> {
+			TransactionPayment::query_info(uxt, len)
+		}
+		fn query_fee_details(
+			uxt: <Block as BlockT>::Extrinsic,
+			len: u32,
+		) -> pallet_transaction_payment::FeeDetails<Balance> {
+			TransactionPayment::query_fee_details(uxt, len)
+		}
+	}
+
+	impl beefy_primitives::BeefyApi<Block> for Runtime {
+		fn validator_set() -> Option<beefy_primitives::ValidatorSet<BeefyId>> {
+			Beefy::validator_set()
+		}
+	}
+
+	impl pallet_mmr_primitives::MmrApi<Block, Hash> for Runtime {
+		fn generate_proof(leaf_index: u64)
+			-> Result<(mmr::EncodableOpaqueLeaf, mmr::Proof<Hash>), mmr::Error>
+		{
+			Mmr::generate_proof(leaf_index)
+				.map(|(leaf, proof)| (mmr::EncodableOpaqueLeaf::from_leaf(&leaf), proof))
+		}
+
+		fn verify_proof(leaf: mmr::EncodableOpaqueLeaf, proof: mmr::Proof<Hash>)
+			-> Result<(), mmr::Error>
+		{
+			pub type Leaf = <
+				<Runtime as pallet_mmr::Config>::LeafData as mmr::LeafDataProvider
+			>::LeafData;
+
+			let leaf: Leaf = leaf
+				.into_opaque_leaf()
+				.try_decode()
+				.ok_or(mmr::Error::Verify)?;
+			Mmr::verify_leaf(leaf, proof)
+		}
+
+		fn verify_proof_stateless(
+			root: Hash,
+			leaf: mmr::EncodableOpaqueLeaf,
+			proof: mmr::Proof<Hash>
+		) -> Result<(), mmr::Error> {
+			type MmrHashing = <Runtime as pallet_mmr::Config>::Hashing;
+			let node = mmr::DataOrHash::Data(leaf.into_opaque_leaf());
+			pallet_mmr::verify_leaf_proof::<MmrHashing, _>(root, node, proof)
+		}
+	}
+
 	impl fp_rpc::EthereumRuntimeRPCApi<Block> for Runtime {
 		fn chain_id() -> u64 {
 			<Runtime as pallet_evm::Config>::ChainId::get()
@@ -1090,6 +1170,7 @@ impl_runtime_apis! {
 				None
 			};
 
+			let is_transactional = false;
 			<Runtime as pallet_evm::Config>::Runner::call(
 				from,
 				to,
@@ -1100,6 +1181,7 @@ impl_runtime_apis! {
 				max_priority_fee_per_gas,
 				nonce,
 				access_list.unwrap_or_default(),
+				is_transactional,
 				config.as_ref().unwrap_or(<Runtime as pallet_evm::Config>::config()),
 			).map_err(|err| err.into())
 		}
@@ -1123,6 +1205,7 @@ impl_runtime_apis! {
 				None
 			};
 
+			let is_transactional = false;
 			<Runtime as pallet_evm::Config>::Runner::create(
 				from,
 				data,
@@ -1132,6 +1215,7 @@ impl_runtime_apis! {
 				max_priority_fee_per_gas,
 				nonce,
 				access_list.unwrap_or_default(),
+				is_transactional,
 				config.as_ref().unwrap_or(<Runtime as pallet_evm::Config>::config()),
 			).map_err(|err| err.into())
 		}
@@ -1175,66 +1259,10 @@ impl_runtime_apis! {
 	}
 
 	impl fp_rpc::ConvertTransactionRuntimeApi<Block> for Runtime {
-		fn convert_transaction(
-			transaction: pallet_ethereum::Transaction,
-		) -> <Block as BlockT>::Extrinsic {
+		fn convert_transaction(transaction: EthereumTransaction) -> <Block as BlockT>::Extrinsic {
 			UncheckedExtrinsic::new_unsigned(
 				pallet_ethereum::Call::<Runtime>::transact { transaction }.into(),
 			)
-		}
-	}
-
-	impl pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi<Block, Balance> for Runtime {
-		fn query_info(
-			uxt: <Block as BlockT>::Extrinsic,
-			len: u32,
-		) -> pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo<Balance> {
-			TransactionPayment::query_info(uxt, len)
-		}
-		fn query_fee_details(
-			uxt: <Block as BlockT>::Extrinsic,
-			len: u32,
-		) -> pallet_transaction_payment::FeeDetails<Balance> {
-			TransactionPayment::query_fee_details(uxt, len)
-		}
-	}
-
-	impl beefy_primitives::BeefyApi<Block> for Runtime {
-		fn validator_set() -> beefy_primitives::ValidatorSet<BeefyId> {
-			Beefy::validator_set()
-		}
-	}
-
-	impl pallet_mmr_primitives::MmrApi<Block, Hash> for Runtime {
-		fn generate_proof(leaf_index: u64)
-			-> Result<(mmr::EncodableOpaqueLeaf, mmr::Proof<Hash>), mmr::Error>
-		{
-			Mmr::generate_proof(leaf_index)
-				.map(|(leaf, proof)| (mmr::EncodableOpaqueLeaf::from_leaf(&leaf), proof))
-		}
-
-		fn verify_proof(leaf: mmr::EncodableOpaqueLeaf, proof: mmr::Proof<Hash>)
-			-> Result<(), mmr::Error>
-		{
-			pub type Leaf = <
-				<Runtime as pallet_mmr::Config>::LeafData as mmr::LeafDataProvider
-			>::LeafData;
-
-			let leaf: Leaf = leaf
-				.into_opaque_leaf()
-				.try_decode()
-				.ok_or(mmr::Error::Verify)?;
-			Mmr::verify_leaf(leaf, proof)
-		}
-
-		fn verify_proof_stateless(
-			root: Hash,
-			leaf: mmr::EncodableOpaqueLeaf,
-			proof: mmr::Proof<Hash>
-		) -> Result<(), mmr::Error> {
-			type MmrHashing = <Runtime as pallet_mmr::Config>::Hashing;
-			let node = mmr::DataOrHash::Data(leaf.into_opaque_leaf());
-			pallet_mmr::verify_leaf_proof::<MmrHashing, _>(root, node, proof)
 		}
 	}
 
@@ -1244,18 +1272,13 @@ impl_runtime_apis! {
 			Vec<frame_benchmarking::BenchmarkList>,
 			Vec<frame_support::traits::StorageInfo>,
 		) {
-			use frame_benchmarking::{list_benchmark, baseline, Benchmarking, BenchmarkList};
+			use frame_benchmarking::{baseline, Benchmarking, BenchmarkList};
 			use frame_support::traits::StorageInfoTrait;
 			use frame_system_benchmarking::Pallet as SystemBench;
 			use baseline::Pallet as BaselineBench;
 
 			let mut list = Vec::<BenchmarkList>::new();
-
-			list_benchmark!(list, extra, frame_benchmarking, BaselineBench::<Runtime>);
-			list_benchmark!(list, extra, frame_system, SystemBench::<Runtime>);
-			list_benchmark!(list, extra, pallet_balances, Balances);
-			list_benchmark!(list, extra, pallet_timestamp, Timestamp);
-			list_benchmark!(list, extra, pallet_template, TemplateModule);
+			list_benchmarks!(list, extra);
 
 			let storage_info = AllPalletsWithSystem::storage_info();
 
@@ -1265,7 +1288,7 @@ impl_runtime_apis! {
 		fn dispatch_benchmark(
 			config: frame_benchmarking::BenchmarkConfig
 		) -> Result<Vec<frame_benchmarking::BenchmarkBatch>, sp_runtime::RuntimeString> {
-			use frame_benchmarking::{baseline, Benchmarking, BenchmarkBatch, add_benchmark, TrackedStorageKey};
+			use frame_benchmarking::{baseline, Benchmarking, BenchmarkBatch, TrackedStorageKey};
 
 			use frame_system_benchmarking::Pallet as SystemBench;
 			use baseline::Pallet as BaselineBench;
@@ -1288,14 +1311,24 @@ impl_runtime_apis! {
 
 			let mut batches = Vec::<BenchmarkBatch>::new();
 			let params = (&config, &whitelist);
-
-			add_benchmark!(params, batches, frame_benchmarking, BaselineBench::<Runtime>);
-			add_benchmark!(params, batches, frame_system, SystemBench::<Runtime>);
-			add_benchmark!(params, batches, pallet_balances, Balances);
-			add_benchmark!(params, batches, pallet_timestamp, Timestamp);
-			add_benchmark!(params, batches, pallet_template, TemplateModule);
+			add_benchmarks!(params, batches);
 
 			Ok(batches)
+		}
+	}
+
+	#[cfg(feature = "try-runtime")]
+	impl frame_try_runtime::TryRuntime<Block> for Runtime {
+		fn on_runtime_upgrade() -> (Weight, Weight) {
+			// NOTE: intentional unwrap: we don't want to propagate the error backwards, and want to
+			// have a backtrace here. If any of the pre/post migration checks fail, we shall stop
+			// right here and right now.
+			let weight = Executive::try_runtime_upgrade().unwrap();
+			(weight, BlockWeights::get().max_block)
+		}
+
+		fn execute_block_no_check(block: Block) -> Weight {
+			Executive::execute_block_no_check(block)
 		}
 	}
 }

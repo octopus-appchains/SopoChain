@@ -1,7 +1,7 @@
 use appchain_sopometa_runtime::{
-	opaque::Block, opaque::SessionKeys, AccountId, BabeConfig, Balance, BalancesConfig, EVMConfig,
-	EthereumConfig, GenesisConfig, GrandpaConfig, ImOnlineConfig, OctopusAppchainConfig,
-	OctopusLposConfig, SessionConfig, Signature, SudoConfig, SystemConfig, DOLLARS, WASM_BINARY,
+	opaque::Block, opaque::SessionKeys, AccountId, BabeConfig, Balance, BalancesConfig,
+	GenesisConfig, GrandpaConfig, ImOnlineConfig, OctopusAppchainConfig, OctopusLposConfig,
+	SessionConfig, Signature, SudoConfig, SystemConfig, DOLLARS, WASM_BINARY,
 };
 use beefy_primitives::crypto::AuthorityId as BeefyId;
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
@@ -10,9 +10,12 @@ use sc_chain_spec::ChainSpecExtension;
 use sc_service::ChainType;
 use serde::{Deserialize, Serialize};
 use sp_consensus_babe::AuthorityId as BabeId;
-use sp_core::{sr25519, Pair, Public, H160, U256};
+use sp_core::{sr25519, Pair, Public};
 use sp_finality_grandpa::AuthorityId as GrandpaId;
 use sp_runtime::traits::{IdentifyAccount, Verify};
+
+use appchain_sopometa_runtime::{EVMConfig, EthereumConfig};
+use sp_core::{H160, U256};
 use std::{collections::BTreeMap, str::FromStr};
 
 // The URL for the telemetry server.
@@ -35,9 +38,13 @@ pub struct Extensions {
 
 /// Specialized `ChainSpec`.
 pub type ChainSpec = sc_service::GenericChainSpec<GenesisConfig, Extensions>;
-/// Octopus testnet generator
+
 pub fn octopus_testnet_config() -> Result<ChainSpec, String> {
-	ChainSpec::from_json_bytes(&include_bytes!("../../resources/testnet.json")[..])
+	ChainSpec::from_json_bytes(&include_bytes!("../../resources/octopus-testnet.json")[..])
+}
+
+pub fn octopus_mainnet_config() -> Result<ChainSpec, String> {
+	ChainSpec::from_json_bytes(&include_bytes!("../../resources/octopus-mainnet.json")[..])
 }
 
 fn session_keys(
@@ -111,6 +118,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
 		None,
 		// Protocol ID
 		None,
+		None,
 		// Properties
 		None,
 		// Extensions
@@ -154,6 +162,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 		None,
 		// Properties
 		None,
+		None,
 		// Extensions
 		Default::default(),
 	))
@@ -195,7 +204,7 @@ fn testnet_genesis(
 			code: wasm_binary.to_vec(),
 		},
 		balances: BalancesConfig {
-			balances: endowed_accounts.iter().cloned().map(|x| (x, ENDOWMENT)).collect(),
+			balances: endowed_accounts.iter().cloned().map(|k| (k, ENDOWMENT)).collect(),
 		},
 		session: SessionConfig {
 			keys: initial_authorities
@@ -215,6 +224,7 @@ fn testnet_genesis(
 				})
 				.collect::<Vec<_>>(),
 		},
+		sudo: SudoConfig { key: Some(root_key) },
 		babe: BabeConfig {
 			authorities: vec![],
 			epoch_config: Some(appchain_sopometa_runtime::BABE_GENESIS_EPOCH_CONFIG),
@@ -223,16 +233,20 @@ fn testnet_genesis(
 		grandpa: GrandpaConfig { authorities: vec![] },
 		transaction_payment: Default::default(),
 		beefy: Default::default(),
+		octopus_appchain: OctopusAppchainConfig {
+			anchor_contract: "octopus-anchor.testnet".to_string(),
+			asset_id_by_name: vec![("usdn.testnet".to_string(), 0)],
+			validators,
+			premined_amount: 1024 * DOLLARS,
+		},
+		octopus_lpos: OctopusLposConfig { era_payout: 2 * DOLLARS, ..Default::default() },
+		octopus_assets: Default::default(),
 		evm: EVMConfig {
 			accounts: {
 				let mut map = BTreeMap::new();
 				map.insert(
-					// H160 address of Alice dev account
-					// Derived from SS58 (42 prefix) address
-					// SS58: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-					// hex: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
-					// Using the full hex key, truncating to the first 20 bytes (the first 40 hex chars)
-					H160::from_str("d43593c715fdd31c61141abd04a99fd6822c8558")
+					// H160 address 0x7e08Db3D4E6E0e0B185605c6C3DCe0A0b1c5e4E2
+					H160::from_str("7e08Db3D4E6E0e0B185605c6C3DCe0A0b1c5e4E2")
 						.expect("internal H160 is valid; qed"),
 					pallet_evm::GenesisAccount {
 						balance: U256::from_str("0xffffffffffffffffffffffffffffffff")
@@ -260,17 +274,5 @@ fn testnet_genesis(
 		ethereum: EthereumConfig {},
 		dynamic_fee: Default::default(),
 		base_fee: Default::default(),
-		octopus_appchain: OctopusAppchainConfig {
-			anchor_contract: "".to_string(),
-			asset_id_by_name: vec![("usdc.testnet".to_string(), 0)],
-			validators,
-			premined_amount: 1024 * DOLLARS,
-		},
-		octopus_lpos: OctopusLposConfig { era_payout: 2 * DOLLARS, ..Default::default() },
-		octopus_assets: Default::default(),
-		sudo: SudoConfig {
-			// Assign network admin rights.
-			key: root_key,
-		},
 	}
 }
