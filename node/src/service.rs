@@ -1,9 +1,8 @@
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
-use std::sync::Arc;
+use appchain_sopometa_runtime::{self, opaque::Block, RuntimeApi};
 
-use appchain_sopometa_runtime::{opaque::Block, RuntimeApi};
-use sc_client_api::ExecutorProvider;
+use sc_client_api::{BlockBackend, ExecutorProvider};
 use sc_consensus_babe::{self, SlotProportion};
 use sc_executor::NativeElseWasmExecutor;
 use sc_finality_grandpa as grandpa;
@@ -11,6 +10,7 @@ use sc_network::NetworkService;
 use sc_service::{config::Configuration, error::Error as ServiceError, RpcHandlers, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_runtime::traits::Block as BlockT;
+use std::sync::Arc;
 
 use fc_consensus::FrontierBlockImport;
 use fc_mapping_sync::{MappingSyncWorker, SyncStrategy};
@@ -52,6 +52,9 @@ type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 type FullGrandpaBlockImport =
 	grandpa::GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>;
 
+/// The transaction pool type defintion.
+pub type TransactionPool = sc_transaction_pool::FullPool<Block, FullClient>;
+
 pub fn frontier_database_dir(config: &Configuration) -> std::path::PathBuf {
 	let config_dir = config
 		.base_path
@@ -66,15 +69,12 @@ pub fn frontier_database_dir(config: &Configuration) -> std::path::PathBuf {
 
 pub fn open_frontier_backend(config: &Configuration) -> Result<Arc<fc_db::Backend<Block>>, String> {
 	Ok(Arc::new(fc_db::Backend::<Block>::new(&fc_db::DatabaseSettings {
-		source: fc_db::DatabaseSettingsSrc::RocksDb {
-			path: frontier_database_dir(&config),
-			cache_size: 0,
-		},
-	})?))
+			source: fc_db::DatabaseSettingsSrc::RocksDb {
+				path: frontier_database_dir(&config),
+				cache_size: 0,
+			},
+		})?))
 }
-
-/// The transaction pool type defintion.
-pub type TransactionPool = sc_transaction_pool::FullPool<Block, FullClient>;
 
 /// Creates a new partial node.
 pub fn new_partial(
@@ -94,11 +94,11 @@ pub fn new_partial(
 				sc_consensus_babe::BabeLink<Block>,
 			),
 			Option<Telemetry>,
-			FrontierBlockImport<
-				Block,
-				sc_consensus_babe::BabeBlockImport<Block, FullClient, FullGrandpaBlockImport>,
-				FullClient,
-			>,
+                        FrontierBlockImport<
+                                Block,
+                                sc_consensus_babe::BabeBlockImport<Block, FullClient, FullGrandpaBlockImport>,
+                                FullClient,
+                        >,
 			Option<FilterPool>,
 			Arc<fc_db::Backend<Block>>,
 			FeeHistoryCache,
@@ -125,6 +125,7 @@ pub fn new_partial(
 		config.wasm_method,
 		config.default_heap_pages,
 		config.max_runtime_instances,
+		config.runtime_cache_size,
 	);
 
 	let (client, backend, keystore_container, task_manager) =
@@ -164,20 +165,19 @@ pub fn new_partial(
 	let justification_import = grandpa_block_import.clone();
 
 	let (block_import, babe_link) = sc_consensus_babe::block_import(
-		sc_consensus_babe::Config::get_or_compute(&*client)?,
-		grandpa_block_import.clone(),
+		sc_consensus_babe::Config::get(&*client)?,
+		grandpa_block_import,
 		client.clone(),
 	)?;
 
-	let frontier_block_import =
+	let frontier_block_import = 
 		FrontierBlockImport::new(block_import.clone(), client.clone(), frontier_backend.clone());
-	
-	let slot_duration = babe_link.config().slot_duration();
-	let target_gas_price = cli.run.target_gas_price;
 
+	let slot_duration = babe_link.config().slot_duration();
+        let target_gas_price = cli.run.target_gas_price;
 	let import_queue = sc_consensus_babe::import_queue(
 		babe_link.clone(),
-		frontier_block_import.clone(),
+		block_import.clone(),
 		Some(Box::new(justification_import)),
 		client.clone(),
 		select_chain.clone(),
@@ -185,7 +185,7 @@ pub fn new_partial(
 			let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
 			let slot =
-				sp_consensus_babe::inherents::InherentDataProvider::from_timestamp_and_duration(
+				sp_consensus_babe::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
 					*timestamp,
 					slot_duration,
 				);
@@ -193,8 +193,8 @@ pub fn new_partial(
 			let uncles =
 				sp_authorship::InherentDataProvider::<<Block as BlockT>::Header>::check_inherents();
 
-			let dynamic_fee =
-				pallet_dynamic_fee::InherentDataProvider(U256::from(target_gas_price));
+                        let dynamic_fee =
+                                pallet_dynamic_fee::InherentDataProvider(U256::from(target_gas_price));
 
 			Ok((timestamp, slot, uncles, dynamic_fee))
 		},
@@ -215,13 +215,13 @@ pub fn new_partial(
 		import_queue,
 		transaction_pool,
 		other: (
-			import_setup,
+            import_setup,
 			telemetry,
 			frontier_block_import,
 			filter_pool,
 			frontier_backend,
 			fee_history_cache,
-		),
+        ),
 	})
 }
 
@@ -249,7 +249,7 @@ pub struct NewFullBase {
 /// Creates a full service from the configuration.
 pub fn new_full_base(
 	mut config: Configuration,
-	cli: &crate::cli::Cli,
+        cli: &crate::cli::Cli,
 	with_startup_data: impl FnOnce(
 		&sc_consensus_babe::BabeBlockImport<Block, FullClient, FullGrandpaBlockImport>,
 		&sc_consensus_babe::BabeLink<Block>,
@@ -278,13 +278,29 @@ pub fn new_full_base(
 		};
 	}
 
-	config.network.extra_sets.push(grandpa::grandpa_peers_set_config());
-	config.network.extra_sets.push(beefy_gadget::beefy_peers_set_config());
+	let grandpa_protocol_name = grandpa::protocol_standard_name(
+		&client.block_hash(0).ok().flatten().expect("Genesis block exists; qed"),
+		&config.chain_spec,
+	);
+
+	config
+		.network
+		.extra_sets
+		.push(grandpa::grandpa_peers_set_config(grandpa_protocol_name.clone()));
 	let warp_sync = Arc::new(grandpa::warp_proof::NetworkProvider::new(
 		backend.clone(),
 		import_setup.1.shared_authority_set().clone(),
 		Vec::default(),
 	));
+
+	let beefy_protocol_name = beefy_gadget::protocol_standard_name(
+		&client.block_hash(0).ok().flatten().expect("Genesis block exists; qed"),
+		&config.chain_spec,
+	);
+	config
+		.network
+		.extra_sets
+		.push(beefy_gadget::beefy_peers_set_config(beefy_protocol_name.clone()));
 
 	let (network, system_rpc_tx, network_starter) =
 		sc_service::build_network(sc_service::BuildNetworkParams {
@@ -313,13 +329,26 @@ pub fn new_full_base(
 	let name = config.network.node_name.clone();
 	let enable_grandpa = !config.disable_grandpa;
 	let prometheus_registry = config.prometheus_registry().cloned();
-
 	let is_authority = config.role.is_authority();
 	let enable_dev_signer = cli.run.enable_dev_signer;
+	let subscription_task_executor =
+		sc_rpc::SubscriptionTaskExecutor::new(task_manager.spawn_handle());
 	let overrides = crate::rpc::overrides_handle(client.clone());
 	let fee_history_limit = cli.run.fee_history_limit;
-	let (beefy_link, beefy_commitment_stream) =
-		beefy_gadget::notification::BeefySignedCommitmentStream::channel();
+
+	let block_data_cache = Arc::new(fc_rpc::EthBlockDataCacheTask::new(
+		task_manager.spawn_handle(),
+		overrides.clone(),
+		50,
+		50,
+		prometheus_registry.clone(),
+	));
+
+	let (beefy_commitment_link, beefy_commitment_stream) =
+		beefy_gadget::notification::BeefySignedCommitmentStream::<Block>::channel();
+	let (beefy_best_block_link, beefy_best_block_stream) =
+		beefy_gadget::notification::BeefyBestBlockStream::<Block>::channel();
+	let beefy_links = (beefy_commitment_link, beefy_best_block_link);
 
 	let (rpc_extensions_builder, rpc_setup) = {
 		let (_, grandpa_link, babe_link) = &import_setup;
@@ -342,67 +371,71 @@ pub fn new_full_base(
 		let select_chain = select_chain.clone();
 		let keystore = keystore_container.sync_keystore();
 		let chain_spec = config.chain_spec.cloned_box();
-
 		let network = network.clone();
 		let filter_pool = filter_pool.clone();
 		let frontier_backend = frontier_backend.clone();
 		let overrides = overrides.clone();
 		let fee_history_cache = fee_history_cache.clone();
 		let max_past_logs = cli.run.max_past_logs;
-		(
-			Box::new(
-				move |deny_unsafe, subscription_executor: sc_rpc::SubscriptionTaskExecutor| {
-					let deps = crate::rpc::FullDeps {
-						client: client.clone(),
-						pool: pool.clone(),
-						select_chain: select_chain.clone(),
-						chain_spec: chain_spec.cloned_box(),
-						deny_unsafe,
-						babe: crate::rpc::BabeDeps {
-							babe_config: babe_config.clone(),
-							shared_epoch_changes: shared_epoch_changes.clone(),
-							keystore: keystore.clone(),
-						},
-						grandpa: crate::rpc::GrandpaDeps {
-							shared_voter_state: shared_voter_state.clone(),
-							shared_authority_set: shared_authority_set.clone(),
-							justification_stream: justification_stream.clone(),
-							subscription_executor: subscription_executor.clone(),
-							finality_provider: finality_proof_provider.clone(),
-						},
-						beefy: crate::rpc::BeefyDeps {
-							beefy_commitment_stream: beefy_commitment_stream.clone(),
-							subscription_executor: subscription_executor.clone(),
-						},
-						frontier: crate::rpc::FrontierDeps {
-							graph: pool.pool().clone(),
-							is_authority,
-							enable_dev_signer,
-							network: network.clone(),
-							filter_pool: filter_pool.clone(),
-							backend: frontier_backend.clone(),
-							max_past_logs,
-							fee_history_limit,
-							fee_history_cache: fee_history_cache.clone(),
-						},
-					};
 
-					crate::rpc::create_full(deps, subscription_executor, overrides.clone())
-						.map_err(Into::into)
-				},
-			),
-			rpc_setup,
-		)
+        (
+			Box::new(move |deny_unsafe, subscription_executor: sc_rpc::SubscriptionTaskExecutor| {
+				let deps = crate::rpc::FullDeps {
+					client: client.clone(),
+					pool: pool.clone(),
+					select_chain: select_chain.clone(),
+					chain_spec: chain_spec.cloned_box(),
+					deny_unsafe,
+					babe: crate::rpc::BabeDeps {
+						babe_config: babe_config.clone(),
+						shared_epoch_changes: shared_epoch_changes.clone(),
+						keystore: keystore.clone(),
+					},
+					grandpa: crate::rpc::GrandpaDeps {
+						shared_voter_state: shared_voter_state.clone(),
+						shared_authority_set: shared_authority_set.clone(),
+						justification_stream: justification_stream.clone(),
+						subscription_executor: subscription_executor.clone(),
+						finality_provider: finality_proof_provider.clone(),
+					},
+					beefy: crate::rpc::BeefyDeps {
+						beefy_commitment_stream: beefy_commitment_stream.clone(),
+						beefy_best_block_stream: beefy_best_block_stream.clone(),
+						subscription_executor,
+					},
+					frontier: crate::rpc::FrontierDeps {
+						graph: pool.pool().clone(),
+						is_authority,
+						enable_dev_signer,
+						network: network.clone(),
+						filter_pool: filter_pool.clone(),
+						backend: frontier_backend.clone(),
+						max_past_logs,
+						fee_history_limit,
+						fee_history_cache: fee_history_cache.clone(),
+						block_data_cache: block_data_cache.clone(),
+					},
+				};
+
+				crate::rpc::create_full(
+					deps,
+					subscription_task_executor.clone(),
+					overrides.clone(),
+				).map_err(Into::into)
+			},
+		), 
+		rpc_setup,)
 	};
 
-	let shared_voter_state = rpc_setup;
+    let shared_voter_state = rpc_setup;
+
 	let rpc_handlers = sc_service::spawn_tasks(sc_service::SpawnTasksParams {
 		config,
 		backend: backend.clone(),
 		client: client.clone(),
 		keystore: keystore_container.sync_keystore(),
 		network: network.clone(),
-		rpc_extensions_builder: Box::new(rpc_extensions_builder),
+		rpc_extensions_builder,
 		transaction_pool: transaction_pool.clone(),
 		task_manager: &mut task_manager,
 		system_rpc_tx,
@@ -411,13 +444,15 @@ pub fn new_full_base(
 
 	task_manager.spawn_essential_handle().spawn(
 		"frontier-mapping-sync-worker",
-		Some("frontier"),
+		None,
 		MappingSyncWorker::new(
 			client.import_notification_stream(),
 			Duration::new(6, 0),
 			client.clone(),
 			backend.clone(),
 			frontier_backend.clone(),
+			3,
+			0,
 			SyncStrategy::Normal,
 		)
 		.for_each(|()| futures::future::ready(())),
@@ -429,7 +464,7 @@ pub fn new_full_base(
 		const FILTER_RETAIN_THRESHOLD: u64 = 100;
 		task_manager.spawn_essential_handle().spawn(
 			"frontier-filter-pool",
-			Some("frontier"),
+			None,
 			EthTask::filter_pool_task(Arc::clone(&client), filter_pool, FILTER_RETAIN_THRESHOLD),
 		);
 	}
@@ -437,7 +472,7 @@ pub fn new_full_base(
 	// Spawn Frontier FeeHistory cache maintenance task.
 	task_manager.spawn_essential_handle().spawn(
 		"frontier-fee-history",
-		Some("frontier"),
+		None,
 		EthTask::fee_history_task(
 			Arc::clone(&client),
 			Arc::clone(&overrides),
@@ -448,7 +483,7 @@ pub fn new_full_base(
 
 	task_manager.spawn_essential_handle().spawn(
 		"frontier-schema-cache-task",
-		Some("frontier"),
+		None,
 		EthTask::ethereum_schema_cache_task(Arc::clone(&client), Arc::clone(&frontier_backend)),
 	);
 
@@ -470,7 +505,7 @@ pub fn new_full_base(
 
 		let client_clone = client.clone();
 		let slot_duration = babe_link.config().slot_duration();
-		let target_gas_price = cli.run.target_gas_price;
+                let target_gas_price = cli.run.target_gas_price;
 		let babe_config = sc_consensus_babe::BabeParams {
 			keystore: keystore_container.sync_keystore(),
 			client: client.clone(),
@@ -490,7 +525,7 @@ pub fn new_full_base(
 					let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
 					let slot =
-						sp_consensus_babe::inherents::InherentDataProvider::from_timestamp_and_duration(
+						sp_consensus_babe::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
 							*timestamp,
 							slot_duration,
 						);
@@ -501,8 +536,8 @@ pub fn new_full_base(
 							&parent,
 						)?;
 
-					let dynamic_fee =
-						pallet_dynamic_fee::InherentDataProvider(U256::from(target_gas_price));
+                                        let dynamic_fee =
+                                                pallet_dynamic_fee::InherentDataProvider(U256::from(target_gas_price));
 
 					Ok((timestamp, slot, uncles, storage_proof, dynamic_fee))
 				}
@@ -531,18 +566,19 @@ pub fn new_full_base(
 
 	let beefy_params = beefy_gadget::BeefyParams {
 		client: client.clone(),
-		backend: backend.clone(),
+		backend,
 		key_store: keystore.clone(),
 		network: network.clone(),
-		signed_commitment_sender: beefy_link,
+		signed_commitment_sender: beefy_links.0,
+		beefy_best_block_sender: beefy_links.1,
 		min_block_delta: 8,
 		prometheus_registry: prometheus_registry.clone(),
+		protocol_name: beefy_protocol_name,
 	};
 
 	let gadget = beefy_gadget::start_beefy_gadget::<_, _, _, _>(beefy_params);
-	task_manager
-		.spawn_essential_handle()
-		.spawn_blocking("beefy-gadget", None, gadget);
+
+	task_manager.spawn_handle().spawn_blocking("beefy-gadget", None, gadget);
 
 	let config = grandpa::Config {
 		// FIXME #1578 make this available through chainspec
@@ -553,6 +589,7 @@ pub fn new_full_base(
 		keystore,
 		local_role: role,
 		telemetry: telemetry.as_ref().map(|x| x.handle()),
+		protocol_name: grandpa_protocol_name,
 	};
 
 	if enable_grandpa {
