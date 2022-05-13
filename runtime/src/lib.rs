@@ -142,9 +142,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	state_version: 1,
 };
 
-pub const MILLICENTS: Balance = 10_000_000_000_000;
-pub const CENTS: Balance = 1_000 * MILLICENTS; // assume this is worth about a cent.
-pub const DOLLARS: Balance = 100 * CENTS;
+// OCT with 18 decimals
+pub const OCTS: Balance = 1_000_000_000_000_000_000;
+pub const UNITS: Balance = 1_000_000_000_000_000_000;
+
+pub const DOLLARS: Balance = UNITS;
+pub const CENTS: Balance = DOLLARS / 100;
+pub const MILLICENTS: Balance = CENTS / 1_000;
 
 /// Since BABE is probabilistic this is the average expected block time that
 /// we are targeting. Blocks will be produced at a minimum duration defined
@@ -360,7 +364,7 @@ impl pallet_timestamp::Config for Runtime {
 }
 
 parameter_types! {
-	pub const ExistentialDeposit: Balance = 1 * DOLLARS;
+	pub const ExistentialDeposit: Balance = 1 * CENTS;
 	// For weight estimation, we assume that the most locks on an individual account will be 50.
 	// This number may need to be adjusted in the future if this assumption no longer holds true.
 	pub const MaxLocks: u32 = 50;

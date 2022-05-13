@@ -1,13 +1,13 @@
 use sopo_runtime::{
 	opaque::Block, opaque::SessionKeys, AccountId, BabeConfig, Balance, BalancesConfig,
 	GenesisConfig, GrandpaConfig, ImOnlineConfig, OctopusAppchainConfig, OctopusLposConfig,
-	SessionConfig, Signature, SudoConfig, SystemConfig, DOLLARS, WASM_BINARY,
+	SessionConfig, Signature, SudoConfig, SystemConfig, OCTS, UNITS as SOPO, WASM_BINARY,
 };
 use beefy_primitives::crypto::AuthorityId as BeefyId;
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
 use pallet_octopus_appchain::AuthorityId as OctopusId;
 use sc_chain_spec::ChainSpecExtension;
-use sc_service::ChainType;
+use sc_service::{ChainType, Properties};
 use serde::{Deserialize, Serialize};
 use sp_consensus_babe::AuthorityId as BabeId;
 use sp_core::{sr25519, Pair, Public};
@@ -88,14 +88,25 @@ pub fn authority_keys_from_seed(
 	)
 }
 
+/// Helper function to generate an properties
+pub fn get_properties(symbol: &str, decimals: u32, ss58format: u32) -> Properties {
+    let mut properties = Properties::new();
+    properties.insert("tokenSymbol".into(), symbol.into());
+    properties.insert("tokenDecimals".into(), decimals.into());
+    properties.insert("ss58Format".into(), ss58format.into());
+
+    properties
+}
+
 pub fn development_config() -> Result<ChainSpec, String> {
 	let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
+	let properties = get_properties("SOPO", 18, 42);
 
 	Ok(ChainSpec::from_genesis(
 		// Name
-		"Development",
+		"SOPO Dev",
 		// ID
-		"dev",
+		"sopo-dev",
 		ChainType::Development,
 		move || {
 			testnet_genesis(
@@ -116,11 +127,11 @@ pub fn development_config() -> Result<ChainSpec, String> {
 		vec![],
 		// Telemetry
 		None,
-		// Protocol ID
+        // Protocol ID
+        Some("sopo-dev"),
 		None,
-		None,
-		// Properties
-		None,
+        // Properties
+        Some(properties),
 		// Extensions
 		Default::default(),
 	))
@@ -128,12 +139,13 @@ pub fn development_config() -> Result<ChainSpec, String> {
 
 pub fn local_testnet_config() -> Result<ChainSpec, String> {
 	let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
+	let properties = get_properties("SOPO", 18, 42);
 
 	Ok(ChainSpec::from_genesis(
 		// Name
-		"Local Testnet",
+		"SOPO Local",
 		// ID
-		"local_testnet",
+		"sopo-local",
 		ChainType::Local,
 		move || {
 			testnet_genesis(
@@ -159,10 +171,10 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 		// Telemetry
 		None,
 		// Protocol ID
+        Some("sopo-local"),
 		None,
 		// Properties
-		None,
-		None,
+        Some(properties),
 		// Extensions
 		Default::default(),
 	))
@@ -176,6 +188,9 @@ fn testnet_genesis(
 	endowed_accounts: Option<Vec<AccountId>>,
 	_enable_println: bool,
 ) -> GenesisConfig {
+	const ENDOWMENT: Balance = 1_000 * SOPO;
+	const STASH: Balance = 100 * OCTS; // 100 OCT
+
 	let mut endowed_accounts: Vec<AccountId> = endowed_accounts.unwrap_or_else(|| {
 		vec![
 			get_account_id_from_seed::<sr25519::Public>("Alice"),
@@ -194,9 +209,6 @@ fn testnet_genesis(
 	});
 
 	let validators = initial_authorities.iter().map(|x| (x.0.clone(), STASH)).collect::<Vec<_>>();
-
-	const ENDOWMENT: Balance = 10_000_000 * DOLLARS;
-	const STASH: Balance = 100 * 1_000_000_000_000_000_000; // 100 OCT with 18 decimals
 
 	GenesisConfig {
 		system: SystemConfig {
@@ -237,9 +249,9 @@ fn testnet_genesis(
 			anchor_contract: "octopus-anchor.testnet".to_string(),
 			asset_id_by_name: vec![("usdn.testnet".to_string(), 0)],
 			validators,
-			premined_amount: 1024 * DOLLARS,
+			premined_amount: 0 * SOPO,
 		},
-		octopus_lpos: OctopusLposConfig { era_payout: 2 * DOLLARS, ..Default::default() },
+		octopus_lpos: OctopusLposConfig { era_payout: 72_000 * SOPO, ..Default::default() },
 		octopus_assets: Default::default(),
 		evm: EVMConfig {
 			accounts: {
