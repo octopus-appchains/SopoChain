@@ -2,16 +2,16 @@ version: "3.2"
 
 services:
   dev:
-    container_name: appchain-sopometa
+    container_name: sopo
     image: paritytech/ci-linux:974ba3ac-20201006
-    working_dir: /var/www/appchain-sopometa
+    working_dir: /var/www/sopo
     ports:
       - "9944:9944"
     environment:
-      - CARGO_HOME=/var/www/appchain-sopometa/.cargo
+      - CARGO_HOME=/var/www/sopo/.cargo
     volumes:
-      - .:/var/www/appchain-sopometa
+      - .:/var/www/sopo
       - type: bind
         source: ./.local
         target: /root/.local
-    command: bash -c "cargo build --release && ./target/release/appchain-sopometa --dev --ws-external"
+    command: bash -c "cargo build --release && ./target/release/sopo --dev --ws-external"

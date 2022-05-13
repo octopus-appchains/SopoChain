@@ -1,12 +1,12 @@
 [package]
-authors = ['SopoMeta <admin@sopometa.com>']
-description = 'SopoMeta runtime'
+authors = ['SopoChain Team']
+description = 'SopoChain runtime'
 edition = '2021'
 homepage = 'https://sopo.world/'
 license = 'Apache-2.0'
-name = 'appchain-sopometa-runtime'
+name = 'sopo-runtime'
 publish = false
-repository = 'https://github.com/SopoMeta/sopometa-appchain'
+repository = 'https://github.com/SopoMeta/SopoChain'
 version = "0.9.18"
 
 [package.metadata.docs.rs]

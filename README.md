@@ -12,7 +12,4 @@ Follow these steps to get started with the Node
 
 ### Run
 
-
-`./target/release/sopo \
---dev \
---enable-offchain-indexing true
+`./target/release/sopo --dev --enable-offchain-indexing true`

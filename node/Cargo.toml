@@ -1,20 +1,20 @@
 [package]
-authors = ['SopoMeta <admin@sopometa.com>']
+authors = ['SopoChain Team']
 build = 'build.rs'
-description = 'SopoMeta node'
+description = 'SopoChain node'
 edition = '2021'
 homepage = 'https://sopo.world/'
 license = 'Apache-2.0'
-name = 'appchain-sopometa'
+name = 'sopo'
 publish = false
-repository = 'https://github.com/SopoMeta/sopometa-appchain'
+repository = 'https://github.com/SopoMeta/SopoChain'
 version = "0.9.18"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [[bin]]
-name = 'appchain-sopometa'
+name = 'sopo'
 
 [dependencies]
 clap = { version = "3.0", features = ["derive"] }
@@ -87,11 +87,11 @@ frame-benchmarking = { version = "4.0.0-dev", git = "https://github.com/parityte
 frame-benchmarking-cli = { version = "4.0.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.18" }
 
 # Local Dependencies
-appchain-sopometa-runtime = { version = "0.9.18", path = "../runtime" }
+sopo-runtime = { version = "0.9.18", path = "../runtime" }
 
 [build-dependencies]
 substrate-build-script-utils = { version = "3.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.18" }
 
 [features]
 default = []
-runtime-benchmarks = ["appchain-sopometa-runtime/runtime-benchmarks"]
+runtime-benchmarks = ["sopo-runtime/runtime-benchmarks"]
