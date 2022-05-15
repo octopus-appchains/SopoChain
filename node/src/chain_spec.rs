@@ -1,7 +1,7 @@
 use sopo_runtime::{
 	opaque::Block, opaque::SessionKeys, AccountId, BabeConfig, Balance, BalancesConfig,
 	GenesisConfig, GrandpaConfig, ImOnlineConfig, OctopusAppchainConfig, OctopusLposConfig,
-	SessionConfig, Signature, SudoConfig, SystemConfig, OCTS, UNITS as SOPO, WASM_BINARY,
+	SessionConfig, Signature, SudoConfig, SystemConfig, OCTS, UNITS as SOTO, WASM_BINARY,
 };
 use beefy_primitives::crypto::AuthorityId as BeefyId;
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
@@ -100,7 +100,7 @@ pub fn get_properties(symbol: &str, decimals: u32, ss58format: u32) -> Propertie
 
 pub fn development_config() -> Result<ChainSpec, String> {
 	let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
-	let properties = get_properties("SOPO", 18, 42);
+	let properties = get_properties("SOTO", 18, 42);
 
 	Ok(ChainSpec::from_genesis(
 		// Name
@@ -139,7 +139,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
 
 pub fn local_testnet_config() -> Result<ChainSpec, String> {
 	let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
-	let properties = get_properties("SOPO", 18, 42);
+	let properties = get_properties("SOTO", 18, 42);
 
 	Ok(ChainSpec::from_genesis(
 		// Name
@@ -188,7 +188,7 @@ fn testnet_genesis(
 	endowed_accounts: Option<Vec<AccountId>>,
 	_enable_println: bool,
 ) -> GenesisConfig {
-	const ENDOWMENT: Balance = 1_000 * SOPO;
+	const ENDOWMENT: Balance = 1_000 * SOTO;
 	const STASH: Balance = 100 * OCTS; // 100 OCT
 
 	let mut endowed_accounts: Vec<AccountId> = endowed_accounts.unwrap_or_else(|| {
@@ -249,9 +249,9 @@ fn testnet_genesis(
 			anchor_contract: "octopus-anchor.testnet".to_string(),
 			asset_id_by_name: vec![("usdn.testnet".to_string(), 0)],
 			validators,
-			premined_amount: 0 * SOPO,
+			premined_amount: 1_533_000_000 * SOTO,
 		},
-		octopus_lpos: OctopusLposConfig { era_payout: 72_000 * SOPO, ..Default::default() },
+		octopus_lpos: OctopusLposConfig { era_payout: 72_000 * SOTO, ..Default::default() },
 		octopus_assets: Default::default(),
 		evm: EVMConfig {
 			accounts: {
