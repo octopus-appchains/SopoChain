@@ -1,7 +1,7 @@
 use sopo_runtime::{
 	opaque::Block, opaque::SessionKeys, AccountId, BabeConfig, Balance, BalancesConfig,
 	GenesisConfig, GrandpaConfig, ImOnlineConfig, OctopusAppchainConfig, OctopusLposConfig,
-	SessionConfig, Signature, SudoConfig, SystemConfig, OCTS, UNITS as SOTO, WASM_BINARY,
+	SessionConfig, Signature, SudoConfig, SystemConfig, OCTS, currency::UNIT as SOTO, WASM_BINARY,
 };
 use beefy_primitives::crypto::AuthorityId as BeefyId;
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
@@ -261,7 +261,7 @@ fn testnet_genesis(
 					H160::from_str("7e08Db3D4E6E0e0B185605c6C3DCe0A0b1c5e4E2")
 						.expect("internal H160 is valid; qed"),
 					pallet_evm::GenesisAccount {
-						balance: U256::from_str("0xffffffffffffffffffffffffffffffff")
+						balance: U256::from_str("0x52b7d2dcc80cd000000000")
 							.expect("internal U256 is valid; qed"),
 						code: Default::default(),
 						nonce: Default::default(),
@@ -273,7 +273,7 @@ fn testnet_genesis(
 					H160::from_str("6be02d1d3665660d22ff9624b7be0551ee1ac91b")
 						.expect("internal H160 is valid; qed"),
 					pallet_evm::GenesisAccount {
-						balance: U256::from_str("0xffffffffffffffffffffffffffffffff")
+						balance: U256::from_str("0x52b7d2dcc80cd000000000")
 							.expect("internal U256 is valid; qed"),
 						code: Default::default(),
 						nonce: Default::default(),
